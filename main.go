@@ -10,12 +10,14 @@ import (
 	"time"
 )
 
-func generateProxy(path, origin string, tls bool) http.Handler {
+func generateProxy(path, origin string, insecure bool) http.Handler {
 	return &httputil.ReverseProxy{Director: func(req *http.Request) {
 		req.Header.Add("X-Forwarded-Host", req.Host)
 		req.Host = origin
 		req.URL.Host = origin
-		if tls {
+		if insecure {
+			req.URL.Scheme = "http"
+		} else {
 			req.URL.Scheme = "https"
 		}
 	}, Transport: &http.Transport{
@@ -32,11 +34,11 @@ type config struct {
 
 func main() {
 	var verbose bool
-	var tls bool
+	var insecure bool
 	var addr string
 	flag.StringVar(&addr, "addr", ":9001", "listening address")
 	flag.BoolVar(&verbose, "verbose", false, "show logs")
-	flag.BoolVar(&tls, "tls", false, "proxy to https")
+	flag.BoolVar(&insecure, "insecure", false, "proxy to http instead of https")
 	flag.Parse()
 
 	// parse args "/sv=sv.example.com"
@@ -61,7 +63,7 @@ func main() {
 		if verbose {
 			log.Printf("proxying %s => %s%s\n", conf.Path, conf.Host, conf.Path)
 		}
-		proxy := generateProxy(conf.Path, conf.Host, tls)
+		proxy := generateProxy(conf.Path, conf.Host, insecure)
 		mux.HandleFunc(conf.Path, func(w http.ResponseWriter, r *http.Request) {
 			if verbose {
 				log.Printf("%s %s => %s%s\n", r.Method, r.URL.String(), conf.Host, r.URL.String())
