@@ -66,10 +66,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	for _, conf := range configuration {
-		proxy := generateProxy(conf.Path, conf.Host, insecure, verbose)
-		mux.HandleFunc(conf.Path, func(w http.ResponseWriter, r *http.Request) {
-			proxy.ServeHTTP(w, r)
-		})
+		mux.Handle(conf.Path, generateProxy(conf.Path, conf.Host, insecure, verbose))
 	}
 
 	if verbose {
