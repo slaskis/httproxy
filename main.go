@@ -10,8 +10,14 @@ import (
 	"time"
 )
 
-func generateProxy(path, origin string, insecure bool) http.Handler {
+func generateProxy(path, origin string, insecure, verbose bool) http.Handler {
+	if verbose {
+		log.Printf("proxying %s => %s%s\n", path, origin, path)
+	}
 	return &httputil.ReverseProxy{Director: func(req *http.Request) {
+		if verbose {
+			log.Printf("%s %s => %s%s\n", req.Method, req.URL.String(), origin, req.URL.String())
+		}
 		req.Header.Add("X-Forwarded-Host", req.Host)
 		req.Host = origin
 		req.URL.Host = origin
@@ -60,14 +66,8 @@ func main() {
 
 	mux := http.NewServeMux()
 	for _, conf := range configuration {
-		if verbose {
-			log.Printf("proxying %s => %s%s\n", conf.Path, conf.Host, conf.Path)
-		}
-		proxy := generateProxy(conf.Path, conf.Host, insecure)
+		proxy := generateProxy(conf.Path, conf.Host, insecure, verbose)
 		mux.HandleFunc(conf.Path, func(w http.ResponseWriter, r *http.Request) {
-			if verbose {
-				log.Printf("%s %s => %s%s\n", r.Method, r.URL.String(), conf.Host, r.URL.String())
-			}
 			proxy.ServeHTTP(w, r)
 		})
 	}
