@@ -10,22 +10,19 @@ import (
 	"time"
 )
 
-func generateProxy(path, origin string, insecure, verbose bool) http.Handler {
-	if verbose {
-		log.Printf("proxying %s => %s%s\n", path, origin, path)
+func generateProxy(cfg config) http.Handler {
+	if cfg.Verbose {
+		log.Printf("proxying %s => %s%s\n", cfg.SrcPath, cfg.Host, cfg.DstPath)
 	}
 	return &httputil.ReverseProxy{Director: func(req *http.Request) {
-		if verbose {
-			log.Printf("%s %s => %s%s\n", req.Method, req.URL.String(), origin, req.URL.String())
+		if cfg.Verbose {
+			log.Printf("%s %s => %s%s\n", req.Method, req.URL.String(), cfg.Host, cfg.DstPath)
 		}
 		req.Header.Add("X-Forwarded-Host", req.Host)
-		req.Host = origin
-		req.URL.Host = origin
-		if insecure {
-			req.URL.Scheme = "http"
-		} else {
-			req.URL.Scheme = "https"
-		}
+		req.Host = cfg.Host
+		req.URL.Host = cfg.Host
+		req.URL.Path = cfg.DstPath
+		req.URL.Scheme = cfg.Scheme
 	}, Transport: &http.Transport{
 		Dial: (&net.Dialer{
 			Timeout: 5 * time.Second,
@@ -34,8 +31,11 @@ func generateProxy(path, origin string, insecure, verbose bool) http.Handler {
 }
 
 type config struct {
-	Path string
-	Host string
+	SrcPath string
+	DstPath string
+	Host    string
+	Scheme  string
+	Verbose bool
 }
 
 func main() {
@@ -47,16 +47,31 @@ func main() {
 	flag.BoolVar(&insecure, "insecure", false, "proxy to http instead of https")
 	flag.Parse()
 
-	// parse args "/sv=sv.example.com"
+	// parse args "/sv=sv.example.com" or "/x=:4000/"
 	var configuration []config
 	for _, arg := range flag.Args() {
 		parts := strings.Split(arg, "=")
 		if len(parts) != 2 {
 			log.Panicln("invalid argument")
 		}
+		scheme := "https"
+		if insecure {
+			scheme = "http"
+		}
+		srcPath := parts[0]
+		dstPath := parts[0]
+		host := parts[1]
+		parts = strings.Split(host, "/")
+		if len(parts) == 2 {
+			host = parts[0]
+			dstPath = "/" + parts[1]
+		}
 		configuration = append(configuration, config{
-			Path: parts[0],
-			Host: parts[1],
+			Verbose: verbose,
+			Scheme:  scheme,
+			SrcPath: srcPath,
+			DstPath: dstPath,
+			Host:    host,
 		})
 	}
 
@@ -66,7 +81,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	for _, conf := range configuration {
-		mux.Handle(conf.Path, generateProxy(conf.Path, conf.Host, insecure, verbose))
+		mux.Handle(conf.SrcPath, generateProxy(conf))
 	}
 
 	if verbose {
