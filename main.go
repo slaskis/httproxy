@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"os"
+	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -49,32 +53,45 @@ func main() {
 	flag.BoolVar(&insecure, "insecure", false, "proxy to http instead of https")
 	flag.Parse()
 
-	// parse args "/sv=sv.example.com" or "/x=:4000/"
+	// parse args "/sv=sv.example.com" or "/x=:4000/" or "--" to start parsing a command
 	var configuration []config
+	var command []string
+	state := "config"
 	for _, arg := range flag.Args() {
-		parts := strings.Split(arg, "=")
-		if len(parts) != 2 {
-			log.Panicln("invalid argument")
+		if arg == "--" {
+			state = "command"
+			continue
 		}
-		scheme := "https"
-		if insecure {
-			scheme = "http"
+
+		switch state {
+		case "config":
+			parts := strings.Split(arg, "=")
+			if len(parts) != 2 {
+				log.Panicln("invalid argument")
+			}
+			scheme := "https"
+			if insecure {
+				scheme = "http"
+			}
+			srcPath := parts[0]
+			dstPath := parts[0]
+			host := parts[1]
+			parts = strings.Split(host, "/")
+			if len(parts) == 2 {
+				host = parts[0]
+				dstPath = "/" + parts[1]
+			}
+			configuration = append(configuration, config{
+				Verbose: verbose,
+				Scheme:  scheme,
+				SrcPath: srcPath,
+				DstPath: dstPath,
+				Host:    host,
+			})
+
+		case "command":
+			command = append(command, arg)
 		}
-		srcPath := parts[0]
-		dstPath := parts[0]
-		host := parts[1]
-		parts = strings.Split(host, "/")
-		if len(parts) == 2 {
-			host = parts[0]
-			dstPath = "/" + parts[1]
-		}
-		configuration = append(configuration, config{
-			Verbose: verbose,
-			Scheme:  scheme,
-			SrcPath: srcPath,
-			DstPath: dstPath,
-			Host:    host,
-		})
 	}
 
 	if len(configuration) == 0 {
@@ -86,8 +103,43 @@ func main() {
 		mux.Handle(conf.SrcPath, generateProxy(conf))
 	}
 
+	srv := http.Server{
+		Handler: mux,
+		Addr:    addr,
+	}
+
+	var exitCode int
+
+	if len(command) > 0 {
+		// run the command and shutdown proxy if command stops
+		go func() {
+			cmd := exec.Command(command[0], command[1:]...)
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			cmd.Env = os.Environ()
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			err := cmd.Run()
+			if err != nil {
+				log.Println("error from command", err)
+			}
+			exitCode = cmd.ProcessState.ExitCode()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			err = srv.Shutdown(ctx)
+			if err != nil {
+				log.Println("error white shutting down http server", err)
+			}
+		}()
+	}
+
 	if verbose {
 		log.Println("listening to " + addr)
 	}
-	log.Fatal(http.ListenAndServe(addr, mux))
+	err := srv.ListenAndServe()
+	if err != nil && err != http.ErrServerClosed {
+		log.Println(err)
+	}
+
+	os.Exit(exitCode)
 }
