@@ -15,13 +15,15 @@ func generateProxy(cfg config) http.Handler {
 		log.Printf("proxying %s => %s%s\n", cfg.SrcPath, cfg.Host, cfg.DstPath)
 	}
 	return &httputil.ReverseProxy{Director: func(req *http.Request) {
+		oldPath := req.URL.String()
+		newPath := cfg.DstPath + strings.TrimPrefix(oldPath, cfg.SrcPath)
 		if cfg.Verbose {
-			log.Printf("%s %s => %s%s\n", req.Method, req.URL.String(), cfg.Host, cfg.DstPath)
+			log.Printf("%s %s => %s%s\n", req.Method, oldPath, cfg.Host, newPath)
 		}
 		req.Header.Add("X-Forwarded-Host", req.Host)
 		req.Host = cfg.Host
 		req.URL.Host = cfg.Host
-		req.URL.Path = cfg.DstPath
+		req.URL.Path = newPath
 		req.URL.Scheme = cfg.Scheme
 	}, Transport: &http.Transport{
 		Dial: (&net.Dialer{
