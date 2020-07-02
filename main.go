@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -114,7 +113,7 @@ func main() {
 		// run the command and shutdown proxy if command stops
 		go func() {
 			cmd := exec.Command(command[0], command[1:]...)
-			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			prepare(cmd)
 			cmd.Env = os.Environ()
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
