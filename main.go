@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -49,10 +51,9 @@ func main() {
 	var addr string
 	flag.StringVar(&addr, "addr", ":9001", "listening address")
 	flag.BoolVar(&verbose, "verbose", false, "show logs")
-	flag.BoolVar(&insecure, "insecure", false, "proxy to http instead of https")
+	flag.BoolVar(&insecure, "insecure", false, "default to http scheme")
 	flag.Parse()
 
-	// parse args "/sv=sv.example.com" or "/x=:4000/" or "--" to start parsing a command
 	var configuration []config
 	var command []string
 	state := "config"
@@ -64,30 +65,11 @@ func main() {
 
 		switch state {
 		case "config":
-			parts := strings.Split(arg, "=")
-			if len(parts) != 2 {
-				log.Panicln("invalid argument")
+			cfg, err := parseArg(arg, verbose, insecure)
+			if err != nil {
+				log.Panicln(err)
 			}
-			scheme := "https"
-			if insecure {
-				scheme = "http"
-			}
-			srcPath := parts[0]
-			dstPath := parts[0]
-			host := parts[1]
-			parts = strings.Split(host, "/")
-			if len(parts) == 2 {
-				host = parts[0]
-				dstPath = "/" + parts[1]
-			}
-			configuration = append(configuration, config{
-				Verbose: verbose,
-				Scheme:  scheme,
-				SrcPath: srcPath,
-				DstPath: dstPath,
-				Host:    host,
-			})
-
+			configuration = append(configuration, cfg)
 		case "command":
 			command = append(command, arg)
 		}
@@ -112,9 +94,13 @@ func main() {
 	if len(command) > 0 {
 		// run the command and shutdown proxy if command stops
 		go func() {
+			if verbose {
+				log.Println("starting command:", command)
+			}
 			cmd := exec.Command(command[0], command[1:]...)
 			prepare(cmd)
 			cmd.Env = os.Environ()
+			cmd.Stdin = os.Stdin
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			err := cmd.Run()
@@ -122,6 +108,9 @@ func main() {
 				log.Println("error from command", err)
 			}
 			exitCode = cmd.ProcessState.ExitCode()
+			if verbose {
+				log.Println("command exited:", exitCode)
+			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -141,4 +130,36 @@ func main() {
 	}
 
 	os.Exit(exitCode)
+}
+
+func parseArg(arg string, verbose, insecure bool) (config, error) {
+	parts := strings.Split(arg, "=")
+	if len(parts) != 2 {
+		return config{}, fmt.Errorf("invalid argument: %s", arg)
+	}
+	source := parts[0]
+	target := parts[1]
+	scheme := "https"
+	if insecure {
+		scheme = "http"
+	}
+	if !strings.Contains(target, "://") {
+		target = scheme + "://" + target
+	}
+	srcPath := source
+	dstPath := source
+	u, err := url.Parse(target)
+	if err != nil {
+		return config{}, err
+	}
+	if u.Path != "" {
+		dstPath = u.Path
+	}
+	return config{
+		Verbose: verbose,
+		Scheme:  u.Scheme,
+		SrcPath: srcPath,
+		DstPath: dstPath,
+		Host:    u.Host,
+	}, nil
 }
