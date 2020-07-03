@@ -16,7 +16,7 @@ httproxy /health=:4040 /=:8000
 
 Here's an example using a separate build step for the download and unpacking to keep the final image lean.
 
-```docker
+```dockerfile
 FROM alpine:3.11.6 AS download
 RUN apk --update add ca-certificates
 RUN mkdir -m 777 /scratchtmp
